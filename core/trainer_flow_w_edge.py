@@ -278,8 +278,8 @@ class Trainer:
         train_data = self.prefetcher.next()
         while train_data is not None:
             self.iteration += 1
-            frames, masks, flows_f, flows_b, _ = train_data
-            frames, masks = frames.to(device), masks.to(device)
+            frames, masks, flows_f, flows_b, _, _ = train_data
+            frames, masks = frames.to(device), masks.to(device).float()
             masks = masks.float()
 
             l_t = self.num_local_frames

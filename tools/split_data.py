@@ -77,10 +77,10 @@ def split_frames(data, dir_id):
     )
     sub_command = []
     for i in mask_frames_sub:
-        current_command = default_command.copy()
+        # current_command = default_command.copy()
         start, end = i
-        current_command.append(f"--use_frames=[{start}, {end}]")
-        sub_command.append(current_command)
+        # current_command.append(f"--use_frames=[{start}, {end}]")
+        sub_command.append([start, end])
 
     res_data = {
         'no_mask_frames': no_mask_frames,

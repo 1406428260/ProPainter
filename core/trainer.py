@@ -19,7 +19,7 @@ from core.dataset import TrainDataset
 
 from model.modules.flow_comp_raft import RAFT_bi, FlowLoss, EdgeLoss
 from model.recurrent_flow_completion import RecurrentFlowCompleteNet
-
+import math
 from RAFT.utils.flow_viz_pt import flow_to_image
 
 
@@ -29,6 +29,7 @@ class Trainer:
         self.epoch = 0
         self.iteration = 0
         self.num_local_frames = config['train_data_loader']['num_local_frames']
+        self.clip_mask = math.ceil(self.num_local_frames / 4)
         self.num_ref_frames = config['train_data_loader']['num_ref_frames']
 
         # setup data set and data loader
@@ -72,7 +73,7 @@ class Trainer:
 
         # set raft
         self.fix_raft = RAFT_bi(device=self.config['device'])
-        self.fix_flow_complete = RecurrentFlowCompleteNet(self.config['model']['ckpt'])
+        self.fix_flow_complete = RecurrentFlowCompleteNet(self.config['model']['flowcomplet_ckpt'])
         for p in self.fix_flow_complete.parameters():
             p.requires_grad = False
         self.fix_flow_complete.to(self.config['device'])
@@ -82,7 +83,7 @@ class Trainer:
 
         # setup models including generator and discriminator
         net = importlib.import_module('model.' + config['model']['net'])
-        self.netG = net.InpaintGenerator()
+        self.netG = net.InpaintGenerator(model_path=self.config['model']['inpaint_ckpt'])
         # print(self.netG)
         self.netG = self.netG.to(self.config['device'])
         if not self.config['model'].get('no_dis', False):
@@ -353,8 +354,8 @@ class Trainer:
         train_data = self.prefetcher.next()
         while train_data is not None:
             self.iteration += 1
-            frames, masks, flows_f, flows_b, _ = train_data
-            frames, masks = frames.to(device), masks.to(device).float()
+            frames, masks, flows_f, flows_b, _, masked= train_data
+            frames, masks, masked = frames.to(device), masks.to(device).float(), masked.to(device)
             l_t = self.num_local_frames
             b, t, c, h, w = frames.size()
             gt_local_frames = frames[:, :l_t, ...]
@@ -374,7 +375,10 @@ class Trainer:
             # pred_flows_bi = gt_flows_bi
 
             # ---- image propagation ----
-            prop_imgs, updated_local_masks = self.netG.module.img_propagation(masked_local_frames, pred_flows_bi, local_masks, interpolation=self.interp_mode)
+            if self.config['distributed']:
+                prop_imgs, updated_local_masks = self.netG.module.img_propagation(masked_local_frames, pred_flows_bi, local_masks, interpolation=self.interp_mode)
+            else:
+                prop_imgs, updated_local_masks = self.netG.img_propagation(masked_local_frames, pred_flows_bi, local_masks, interpolation=self.interp_mode)
             updated_masks = masks.clone()
             updated_masks[:, :l_t, ...] = updated_local_masks.view(b, l_t, 1, h, w)
             updated_frames = masked_frames.clone()
@@ -387,8 +391,17 @@ class Trainer:
 
             # get the local frames
             pred_local_frames = pred_imgs[:, :l_t, ...]
-            comp_local_frames = gt_local_frames * (1. - local_masks) +  pred_local_frames * local_masks
+            comp_local_frames = gt_local_frames * (1. - local_masks) + pred_local_frames * local_masks
             comp_imgs = frames * (1. - masks) + pred_imgs * masks
+            # 因为dataset设置了有些帧是没有mask的为了避免影响后续判别器的判断,只保留了有mask的
+            # comp_imgs = comp_imgs[:, self.clip_mask:self.num_local_frames-self.clip_mask]
+            tmp_comps = []
+            for batch in range(b):
+                masked_t = comp_imgs[batch][masked[batch]]
+                tmp_comps.append(masked_t)
+            tmp_comps = torch.concat(tmp_comps)
+            tmp_each_t = int(tmp_comps.shape[0] / b)
+            comp_imgs = tmp_comps[:tmp_each_t * b].reshape(b, tmp_each_t, c, h, w)
 
             gen_loss = 0
             dis_loss = 0
@@ -447,7 +460,7 @@ class Trainer:
             self.update_learning_rate()
 
             # write image to tensorboard
-            if self.iteration % 200 == 0:
+            if self.iteration % self.config['trainer']['vis_freq'] == 0:
                 # img to cpu
                 t = 0
                 gt_local_frames_cpu = ((gt_local_frames.view(b,-1,3,h,w) + 1)/2.0).cpu()

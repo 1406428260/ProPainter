@@ -21,9 +21,8 @@ def initialize_RAFT(model_path='weights/raft-things.pth', device='cuda'):
     model = torch.nn.DataParallel(RAFT(args))
     model.load_state_dict(torch.load(args.raft_model, map_location='cpu'))
     model = model.module
-
     model.to(device)
-
+    print(f'load RAFT {model_path}')
     return model
 
 def initialize_SEA_RAFT(model_path='weights/Tartan-C-T-TSKH-spring540x960-M.pth', device='cuda'):
@@ -38,6 +37,7 @@ def initialize_SEA_RAFT(model_path='weights/Tartan-C-T-TSKH-spring540x960-M.pth'
     model = torch.nn.DataParallel(model).module
     model.to(device)
     model.eval()
+    print(f'load RAFT {model_path}')
     return model
 
 

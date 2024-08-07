@@ -172,50 +172,126 @@ class ToTorchFormatTensor(object):
 
 
 # ###########################################################################
+# 在任意宽高比的视频训练数据中，找到最大符合self.h self.w的区域
+# ###########################################################################
+
+def max_area(frame_h, frame_w, self_h, self_w):
+    org_hw_r = frame_h / frame_w
+    tar_hw_r = self_h / self_w
+    if org_hw_r <= tar_hw_r:
+        new_h = frame_h
+        new_w = int((self_w * frame_h) / self_h)
+        w_empty = frame_w - new_w
+        left = random.randint(0, w_empty)
+        right = left + new_w
+        top = 0
+        down = frame_h
+    else:
+        new_w = frame_w
+        new_h = int((self_h * frame_w) / self.w)
+        h_empty = frame_h - new_h
+        left = 0
+        right = frame_w
+        top = random.randint(0, h_empty)
+        down = top + new_h
+    return left, right, top, down
+
+
+# ###########################################################################
+# 较小概率下 使得local前后有无mask帧， 或ref帧无mask
+# ###########################################################################
+def mask_process(all_masks, selected_index, self_h, self_w,  num_local_frames):
+    no_mask = Image.fromarray(np.zeros((self_h, self_w)).astype(np.uint8))
+    masked_list = [1] * len(all_masks)
+    if random.uniform(0, 1) < 0.8:  # 直接返回
+        return all_masks, masked_list
+    else:
+        if random.uniform(0, 1) < 0.5:  # local前后有参考帧  前参考
+            no_mask_num = random.randint(1, math.ceil(num_local_frames/4))
+            for x in range(no_mask_num):
+                all_masks[x] = no_mask
+                masked_list[x] = 0
+        if random.uniform(0, 1) < 0.5:  # local前后有参考帧  后参考
+            no_mask_num = random.randint(1, math.ceil(num_local_frames / 4))
+            for x in range(num_local_frames-no_mask_num,num_local_frames):
+                all_masks[x] = no_mask
+                masked_list[x] = 0
+        if random.uniform(0, 1) < 0.5:  # ref前后有参考帧
+            no_mask_num = random.randint(1, math.ceil((len(selected_index)-num_local_frames) / 2))
+            for x in random.sample([x for x in range(num_local_frames, len(all_masks))], no_mask_num):
+                all_masks[x] = no_mask
+                masked_list[x] = 0
+        return all_masks, masked_list
+
+# ###########################################################################
 # Create masks with random shape
 # ###########################################################################
 
 
-def create_random_shape_with_random_motion(video_length,
-                                           imageHeight=240,
-                                           imageWidth=432):
-    # get a random shape
-    height = random.randint(imageHeight // 3, imageHeight - 1)
-    width = random.randint(imageWidth // 3, imageWidth - 1)
-    edge_num = random.randint(6, 8)
-    ratio = random.randint(6, 8) / 10
+def create_random_shape_with_random_motion(
+                                        mask_mod,
+                                        video_length,
+                                        imageHeight=240,
+                                        imageWidth=432):
+    # 模拟字幕mask
+    if mask_mod == 0:
+        bg = Image.new('L', (imageWidth, imageHeight), 0)
 
-    region = get_random_shape(edge_num=edge_num,
-                              ratio=ratio,
-                              height=height,
-                              width=width)
-    region_width, region_height = region.size
-    # get random position
-    x, y = random.randint(0, imageHeight - region_height), random.randint(
-        0, imageWidth - region_width)
-    velocity = get_random_velocity(max_speed=3)
-    m = Image.fromarray(np.zeros((imageHeight, imageWidth)).astype(np.uint8))
-    m.paste(region, (y, x, y + region.size[0], x + region.size[1]))
-    masks = [m.convert('L')]
-    # return fixed masks
-    if random.uniform(0, 1) > 0.5:
-        return masks * video_length
-    # return moving masks
-    for _ in range(video_length - 1):
-        x, y, velocity = random_move_control_points(x,
-                                                    y,
-                                                    imageHeight,
-                                                    imageWidth,
-                                                    velocity,
-                                                    region.size,
-                                                    maxLineAcceleration=(3,
-                                                                         0.5),
-                                                    maxInitSpeed=3)
-        m = Image.fromarray(
-            np.zeros((imageHeight, imageWidth)).astype(np.uint8))
+        # 随机确定长方形mask的左上角坐标和大小
+        # 注意：为了避免长方形超出图片边界，需要做一些边界检查
+        top = random.randint(int(imageHeight * 0.5), int(imageHeight * 0.9))
+        left = random.randint(int(imageWidth * 0.02), int(imageWidth * 0.4))
+        height = min(random.randint(int(imageHeight * 0.04), int(imageHeight * 0.07)),
+                     int(imageHeight * 0.98 - top))  # 确保高度不会超出图片底部
+        width = min(random.randint(int(imageWidth * 0.2), int(imageWidth * 0.9)),
+                    int(imageWidth * 0.98 - left))  # 确保宽度不会超出图片右侧
+
+        # 创建一个与原图同模式的、仅包含mask区域的图片
+        # 这里我们使用相同的颜色（mask_color）填充整个mask区域
+        mask = Image.new('L', (width, height), 255)
+
+        # 将mask粘贴到原图的指定位置
+        bg.paste(mask, (left, top))
+        masks = [bg] * video_length
+        return masks
+    else:
+        # get a random shape
+        height = random.randint(imageHeight // 3, imageHeight - 1)
+        width = random.randint(imageWidth // 3, imageWidth - 1)
+        edge_num = random.randint(6, 8)
+        ratio = random.randint(6, 8) / 10
+
+        region = get_random_shape(edge_num=edge_num,
+                                  ratio=ratio,
+                                  height=height,
+                                  width=width)
+        region_width, region_height = region.size
+        # get random position
+        x, y = random.randint(0, imageHeight - region_height), random.randint(
+            0, imageWidth - region_width)
+        velocity = get_random_velocity(max_speed=3)
+        m = Image.fromarray(np.zeros((imageHeight, imageWidth)).astype(np.uint8))
         m.paste(region, (y, x, y + region.size[0], x + region.size[1]))
-        masks.append(m.convert('L'))
-    return masks
+        masks = [m.convert('L')]
+        # return fixed masks
+        if mask_mod == 1:
+            return masks * video_length
+        # return moving masks
+        for _ in range(video_length - 1):
+            x, y, velocity = random_move_control_points(x,
+                                                        y,
+                                                        imageHeight,
+                                                        imageWidth,
+                                                        velocity,
+                                                        region.size,
+                                                        maxLineAcceleration=(3,
+                                                                             0.5),
+                                                        maxInitSpeed=3)
+            m = Image.fromarray(
+                np.zeros((imageHeight, imageWidth)).astype(np.uint8))
+            m.paste(region, (y, x, y + region.size[0], x + region.size[1]))
+            masks.append(m.convert('L'))
+        return masks
 
 
 def create_random_shape_with_random_motion_zoom_rotation(video_length, zoomin=0.9, zoomout=1.1, rotmin=1, rotmax=10, imageHeight=240, imageWidth=432):

@@ -5,7 +5,7 @@
         "name": "davis",
         "video_root": "/data2/zhf/workplace/ProPainter/datasets/davis/images/",
         "flow_root": "",
-        "w": 432,
+        "w": 240,
         "h": 432,
         "num_local_frames": 10,
         "num_ref_frames": 1,

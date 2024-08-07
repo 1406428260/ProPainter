@@ -1,13 +1,13 @@
 {
     "seed": 2023,
-    "save_dir": "experiments_model/",
+    "save_dir": "experiments_model/mask_index_no_pre",
     "train_data_loader": {
-        "name": "youtube-vos",
-        "video_root": "your_video_root",
-        "flow_root": "your_flow_root",
-        "w": 432,
+        "name": "davis",
+        "video_root": "/data2/zhf/workplace/ProPainter/datasets/davis/images/",
+        "flow_root": "",
+        "w": 240,
         "h": 432,
-        "num_local_frames": 10, 
+        "num_local_frames": 10,
         "num_ref_frames": 6,
         "load_flow": 0
     },
@@ -21,6 +21,8 @@
     },
     "model": {
         "net": "propainter",
+        "flowcomplet_ckpt": "weights/recurrent_flow_completion.pth",
+        "inpaint_ckpt": "",
         "no_dis": 0,
         "load_d": 1,
         "interp_mode": "nearest"
@@ -34,8 +36,9 @@
         "batch_size": 8,
         "num_workers": 8,
         "num_prefetch_queue": 8,
-        "log_freq": 100,
-        "save_freq": 1e4,
+        "log_freq": 50,
+        "save_freq": 5e3,
+        "vis_freq": 200,
         "iterations": 700e3,
         "scheduler": {
             "type": "MultiStepLR",

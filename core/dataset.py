@@ -12,8 +12,8 @@ import torchvision.transforms as transforms
 from utils.file_client import FileClient
 from utils.img_util import imfrombytes
 from utils.flow_util import resize_flow, flowread
-from core.utils import (create_random_shape_with_random_motion, Stack,
-                        ToTorchFormatTensor, GroupRandomHorizontalFlip,GroupRandomHorizontalFlowFlip)
+from core.utils import (create_random_shape_with_random_motion, Stack, mask_process,
+                        ToTorchFormatTensor, GroupRandomHorizontalFlip,GroupRandomHorizontalFlowFlip, max_area)
 
 
 class TrainDataset(torch.utils.data.Dataset):
@@ -57,7 +57,7 @@ class TrainDataset(torch.utils.data.Dataset):
             ToTorchFormatTensor(),
         ])
         self.file_client = FileClient('disk')
-
+        # self.test = []
     def __len__(self):
         return len(self.video_names)
 
@@ -73,29 +73,53 @@ class TrainDataset(torch.utils.data.Dataset):
     def __getitem__(self, index):
         video_name = self.video_names[index]
         # create masks
-        all_masks = create_random_shape_with_random_motion(
-            self.video_dict[video_name], imageHeight=self.h, imageWidth=self.w)
+        mask_rand = random.uniform(0, 1)
+        mask_mod = 0
+        if 0 <= mask_rand < 0.33:
+            mask_mod = 0  # 字幕长方mask（不动）
+        elif 0.33 <= mask_rand < 0.66:
+            mask_mod = 1  # 多边形（不动）
+        else:
+            mask_mod = 2  # 多边形（动）
+
+        # all_masks = create_random_shape_with_random_motion(mask_mod, video_length, imageHeight=self.h, imageWidth=self.w)
 
         # create sample index
         selected_index = self._sample_index(self.video_dict[video_name],
                                             self.num_local_frames,
                                             self.num_ref_frames)
+        if mask_mod == 2:
+            all_masks = create_random_shape_with_random_motion(mask_mod, max(selected_index)+1, imageHeight=self.h, imageWidth=self.w)
+            all_masks = [all_masks[x] for x in selected_index]
+        else:
+            all_masks = create_random_shape_with_random_motion(mask_mod, len(selected_index), imageHeight=self.h, imageWidth=self.w)
+
+        masks, masked_list = mask_process(all_masks, selected_index, self.h, self.w, self.num_local_frames)
 
         # read video frames
         frames = []
-        masks = []
+        # masks = []
         flows_f, flows_b = [], []
-        for idx in selected_index:
-            frame_list = self.frame_dict[video_name]
+        frame_list = self.frame_dict[video_name]
+        img_path = os.path.join(self.video_root, video_name, frame_list[0])
+        frame_h, frame_w = cv2.imread(img_path).shape[:2]
+        left, right, top, down = max_area(frame_h, frame_w, self.h, self.w)   # 视频宽高自适应
+        for ii, idx in enumerate(selected_index):
             img_path = os.path.join(self.video_root, video_name, frame_list[idx])
             img_bytes = self.file_client.get(img_path, 'img')
             img = imfrombytes(img_bytes, float32=False)
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            img = img[top:down, left:right]
             img = cv2.resize(img, self.size, interpolation=cv2.INTER_LINEAR)
             img = Image.fromarray(img)
 
             frames.append(img)
-            masks.append(all_masks[idx])
+            # masks.append(all_masks[idx])
+
+            # 可视化
+            # if not video_name in self.test:
+            #     img.save('dataset_vis/img/{}_{:05d}.png'.format(video_name, idx))
+            #     masks[ii].save('dataset_vis/mask/{}_{:05d}.png'.format(video_name, idx))
 
             if len(frames) <= self.num_local_frames-1 and self.load_flow:
                 current_n = frame_list[idx][:-4]
@@ -119,7 +143,9 @@ class TrainDataset(torch.utils.data.Dataset):
                         flows_ = flows_f
                         flows_f = flows_b
                         flows_b = flows_
-                
+
+        # if not video_name in self.test:
+        #     self.test.append(video_name)
         if self.load_flow:
             frames, flows_f, flows_b = GroupRandomHorizontalFlowFlip()(frames, flows_f, flows_b)
         else:
@@ -128,6 +154,7 @@ class TrainDataset(torch.utils.data.Dataset):
         # normalizate, to tensors
         frame_tensors = self._to_tensors(frames) * 2.0 - 1.0
         mask_tensors = self._to_tensors(masks)
+        masked_tensors = torch.tensor(masked_list).to(torch.bool)
         if self.load_flow:
             flows_f = np.stack(flows_f, axis=-1) # H W 2 T-1
             flows_b = np.stack(flows_b, axis=-1)
@@ -136,9 +163,9 @@ class TrainDataset(torch.utils.data.Dataset):
 
         # img [-1,1] mask [0,1]
         if self.load_flow:
-            return frame_tensors, mask_tensors, flows_f, flows_b, video_name
+            return frame_tensors, mask_tensors, flows_f, flows_b, video_name, masked_tensors
         else:
-            return frame_tensors, mask_tensors, 'None', 'None', video_name
+            return frame_tensors, mask_tensors, 'None', 'None', video_name, masked_tensors
 
 
 class TestDataset(torch.utils.data.Dataset):
