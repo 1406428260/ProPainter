@@ -241,7 +241,7 @@ def create_random_shape_with_random_motion(
         # 注意：为了避免长方形超出图片边界，需要做一些边界检查
         top = random.randint(int(imageHeight * 0.5), int(imageHeight * 0.9))
         left = random.randint(int(imageWidth * 0.02), int(imageWidth * 0.4))
-        height = min(random.randint(int(imageHeight * 0.04), int(imageHeight * 0.07)),
+        height = min(random.randint(int(imageHeight * 0.04), int(imageHeight * 0.08)),
                      int(imageHeight * 0.98 - top))  # 确保高度不会超出图片底部
         width = min(random.randint(int(imageWidth * 0.2), int(imageWidth * 0.9)),
                     int(imageWidth * 0.98 - left))  # 确保宽度不会超出图片右侧

@@ -75,9 +75,9 @@ class TrainDataset(torch.utils.data.Dataset):
         # create masks
         mask_rand = random.uniform(0, 1)
         mask_mod = 0
-        if 0 <= mask_rand < 0.33:
+        if 0 <= mask_rand < 0.2:
             mask_mod = 0  # 字幕长方mask（不动）
-        elif 0.33 <= mask_rand < 0.66:
+        elif 0.2 <= mask_rand < 0.6:
             mask_mod = 1  # 多边形（不动）
         else:
             mask_mod = 2  # 多边形（动）
