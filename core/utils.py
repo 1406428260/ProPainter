@@ -188,7 +188,7 @@ def max_area(frame_h, frame_w, self_h, self_w):
         down = frame_h
     else:
         new_w = frame_w
-        new_h = int((self_h * frame_w) / self.w)
+        new_h = int((self_h * frame_w) / self_w)
         h_empty = frame_h - new_h
         left = 0
         right = frame_w
